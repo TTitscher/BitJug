@@ -1,0 +1,6 @@
+*.html
+*.db
+__pycache__
+
+*.xdmf
+*.h5
