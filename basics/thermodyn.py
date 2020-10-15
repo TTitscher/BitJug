@@ -39,6 +39,7 @@ u, du, u_ = Function(Vu), TrialFunction(Vu), TestFunction(Vu)
 
 Vxi = FunctionSpace(mesh, "DG", 0)
 xi = Function(Vxi)
+xi_ = TestFunction(Vxi)
 
 kappa = Constant(1e-5)
 beta = Constant(1e-5)
@@ -46,13 +47,22 @@ rho = 1/(1 + (1/kappa - 1)*xi**3)
 
 E = E0 * rho
 
+np.random.seed(6174)
 
 u.vector()[:] = np.random.random(len(u.vector()[:]))
 xi.vector()[:] += 0.4
 
-p_m = 0.5 * inner(eps(u_), diff(rho,xi)* sigma(u)) * dx
+p_m = 0.5 * inner(eps(u_), diff(rho,xi)* sigma(u)) 
 
-print(assemble(p_m)[:])
+beta = 0.5 * abs(inner(eps(u), diff(rho,xi)* sigma(u)))  / lx/ly
+
+
+Psi_p = -2*beta*(rho - 1/2)**4
+
+p_beta = derivative(Psi_p*dx, xi, xi_)
+
+
+
 
 
 # Psi_p =
