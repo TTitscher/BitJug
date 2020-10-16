@@ -4,14 +4,15 @@ import nlopt
 import scipy
 
 from topopt.boundary_conditions import *
-from topopt.problems import ComplianceProblem
+from topopt.problems import *
 from topopt.guis import GUI
 
-# nelx, nely = 120, 30  # Number of elements in the x and y
-nelx, nely = 360, 200  # Number of elements in the x and y
+nelx, nely = 60, 20  # Number of elements in the x and y
+# nelx, nely = 20, 5  # Number of elements in the x and y
+# nelx, nely = 360, 200  # Number of elements in the x and y
 volfrac = 0.4  # Volume fraction for constraints
 penal = 3.0  # Penalty for SIMP
-rmin = 5  # Filter radius
+rmin = 3  # Filter radius
 
 show_gui = True
 
@@ -71,6 +72,7 @@ if show_gui:
 def volume_constraint(x, dv):
     xPhys[:] = np.asarray(H * x[:,np.newaxis] / Hs)[:, 0]
     dv[:] = 1.
+    dv[:] = numpy.asarray(H * (dv[np.newaxis].T / Hs))[:, 0]
     return xPhys.sum() - volfrac * x.size
 
 
@@ -93,7 +95,10 @@ opt = nlopt.opt(nlopt.LD_MMA, n)
 
 xPhys = np.ones(n)
 
-opt.set_lower_bounds(np.zeros(n))
+lower = np.zeros(n)
+# lower[1000:1200] = 0.99
+# x[1000:1200] = 0.99
+opt.set_lower_bounds(lower)
 opt.set_upper_bounds(np.ones(n))
 
 opt.set_min_objective(objective)
