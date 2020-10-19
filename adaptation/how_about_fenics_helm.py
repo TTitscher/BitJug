@@ -11,9 +11,9 @@ import tqdm
 ## SIMP
 def simp(x):
     p = Constant(3.)
+    # return x**p
     _eps = Constant(1.e-6)
     return _eps + (1 - _eps) * x ** p
-
 
 class FEM:
     def __init__(self, lx, ly, nx, ny, E0=20000, nu=0.2):
@@ -21,17 +21,20 @@ class FEM:
 
         self.mesh = RectangleMesh(Point(0,0), Point(lx, ly), nx, ny, "crossed")        
         self.Vu = VectorFunctionSpace(self.mesh, "P", 1)
-        self.force = Constant((0, -50))
+        self.force = Constant((0, -1))
 
         self.Vx = FunctionSpace(self.mesh, "DG", 0)
         self.x = interpolate(Constant(0.4),self.Vx)
+        self.xf = interpolate(Constant(0.0),self.Vx)
+        self.dxf = interpolate(Constant(0.0),self.Vx)
 
-        self.vol = self.x * dx
+        self.vol = self.x/self.V0 * dx
         self.bcs = []
         self.bcs.append(DirichletBC(self.Vu, (0.,0.), plane_at(0., "x")))
         
         def load(x, on_boundary):
-            return near(x[0], lx) and on_boundary and near(x[1], ly/2, eps=1)
+            return near(x[1], ly) and on_boundary 
+
         facets = MeshFunction("size_t", self.mesh, 1)
         AutoSubDomain(load).mark(facets, 1)
         ds = Measure("ds", subdomain_data=facets)
@@ -45,67 +48,76 @@ class FEM:
             return 2.0 * mu * sym(grad(u)) + lmbda * tr(sym(grad(u))) * Identity(len(u))
 
         du, u_ = TrialFunction(self.Vu), TestFunction(self.Vu)
-        F = simp(self.x)*inner(eps(u_), sigma(du)) * dx - inner(self.force, u_)*ds(1)
+        F = simp(self.xf)*inner(eps(u_), sigma(du)) * dx + inner(self.force, u_)*ds(1)
         self.a, self.L = lhs(F), rhs(F)
         self.u = Function(self.Vu)
 
-        self.dK = diff(simp(self.x), self.x)*inner(eps(u_), sigma(du)) * dx 
+        self.dK = diff(simp(self.xf), self.xf)*inner(eps(u_), sigma(du)) * dx 
     
         self.pp = XDMFFile("yay.xdmf")
         self.pp.parameters["functions_share_mesh"]=True
         self.pp.parameters["flush_output"]=True
         self.t = 0.
 
-
-        R = 0.8
-        r = self.Vx.tabulate_dof_coordinates()
-        A = lil_matrix((len(r), len(r)))
-
-        for dof0, x0 in enumerate(tqdm.tqdm(r)):
-            for dof1, x1 in enumerate(r):
-                dist = np.linalg.norm(x0 - x1)
-                if dist < R:
-                    A[dof0, dof1] = R - dist
+        #
+        self.R = 0.05
+        # r = self.Vx.tabulate_dof_coordinates()
+        # A = lil_matrix((len(r), len(r)))
+        #
+        # for dof0, x0 in enumerate(tqdm.tqdm(r)):
+        #     for dof1, x1 in enumerate(r):
+        #         dist = np.linalg.norm(x0 - x1)
+        #         if dist < R:
+        #             A[dof0, dof1] = R - dist
     
-        self.H = csr_matrix(A)
-        self.Hs = self.H.sum(1)
-        # plt.spy(self.H)
-        # plt.show()
+
+
+    
 
     def volume_constraint(self, x, dv=None):
-        self.x.vector()[:] = x#np.asarray(self.H * x[:, np.newaxis]/ self.Hs)[:, 0]
+        self.x.vector()[:] = x
         dv[:] = assemble(derivative(self.vol, self.x))[:]
-        # dv[:] = np.asarray(self.H * (dv[np.newaxis].T / self.Hs))[:, 0]
-        return assemble(self.vol) /self.V0 - 0.4
-    
+        return assemble(self.vol) - 0.4
+
 
     def goal(self,x, dobj=None):
-        print("#", flush=True, end="")
-        # print(x, flush=True)
-        self.x.vector()[:] = np.asarray(self.H * x[:, np.newaxis]/ self.Hs)[:, 0]
+        self.x.vector()[:] = x
+        VDG = FunctionSpace(self.mesh, "DG", 0)
+        VP = FunctionSpace(self.mesh, "P", 1)
+        df, f_ = TestFunction(VP), TrialFunction(VP)
 
+        af = dot(grad(df), self.R**2 * grad(f_)) * dx + df * f_ * dx
+        Lf = df * self.x * dx 
+        
+        A = assemble(af)
+        L = assemble(Lf)
+        
+        solve(A, self.xf.vector(), L)
+
+        Vx = assemble(self.x * dx)
+        Vxf = assemble(self.xf * dx)
+        print(Vx - Vxf)
+        
         K, F = assemble_system(self.a, self.L, self.bcs)
-        # solve(self.a == self.L, self.u, self.bcs)
-
         solve(K, self.u.vector(), F)
 
-
         J = F.inner(self.u.vector())
-
-        dKdxU = assemble(derivative(self.a * self.u, self.x))
+        dKdxU = assemble(derivative(self.a * self.u, self.xf))
+        print(self.t, "c = ", J, flush=True)
     
         # help(dKdxU.transpmult)
         # exit(-1)
-        dx = Function(self.Vx)
-        dKdxU.transpmult(self.u.vector(), dx.vector())
+        dc_dx = Function(self.Vx)
+        dKdxU.transpmult(self.u.vector(), dc_dx.vector())
 
-        dobj[:] = -self.H * dx.vector()[:]
+        Ldx = assemble(-df * dc_dx * dx)
         
-        # dobj[:] = -self.u.vector()[:] @ dKdxU.array()
-        
-        dobj[:] = np.asarray(self.H * (dobj[:,np.newaxis] / self.Hs))[:, 0]
+        solve(A, self.dxf.vector(), Ldx)
 
+        dobj[:] = self.dxf.vector()[:]
+        
         self.pp.write(self.x, self.t)
+        self.pp.write(self.xf, self.t)
         self.t += 1.
 
         return J
@@ -117,7 +129,7 @@ class FEM:
 
 if __name__ == "__main__":
     set_log_level(50)
-    fem = FEM(30, 10, 30, 10)
+    fem = FEM(4, 1, 200, 50)
 
     x0 = fem.x.vector()[:]
     n = len(x0)
@@ -137,14 +149,14 @@ if __name__ == "__main__":
 
 
 
-    opt.set_maxeval(400)
+    opt.set_maxeval(100)
+    # opt.set_xtol_abs(0.1)
     x = opt.optimize(x0)
 
 
     print(x)
         
 
-    XDMFFile("u.xdmf").write(fem.u)
 
     # print(fem.volume_constraint(x0))
     # print(fem.goal(x0))

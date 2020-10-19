@@ -2,12 +2,13 @@ import numpy as np
 import math
 import nlopt
 import scipy
+from scipy.optimize import minimize
 
 from topopt.boundary_conditions import *
 from topopt.problems import *
 from topopt.guis import GUI
 
-nelx, nely = 60, 20  # Number of elements in the x and y
+nelx, nely = 30, 10  # Number of elements in the x and y
 # nelx, nely = 20, 5  # Number of elements in the x and y
 # nelx, nely = 360, 200  # Number of elements in the x and y
 volfrac = 0.4  # Volume fraction for constraints
@@ -64,7 +65,9 @@ def H_filter(nelx, nely, rmin):
         return H, Hs
 
 H, Hs = H_filter(nelx, nely, rmin)
-
+    
+n = nelx * nely
+xPhys = np.ones(n)
 
 if show_gui:
     gui = GUI(problem, "Topology Optimization Example")
@@ -86,28 +89,49 @@ def objective(x, dc):
     print(obj, flush=True)
     return obj
 
-def optimize():
-    xPhys = x.copy()
-    return solver.opt.optimize(x)
+def with_nlopt():
+    opt = nlopt.opt(nlopt.LD_MMA, n)
 
-n = nelx * nely
-opt = nlopt.opt(nlopt.LD_MMA, n)
+    xPhys = np.ones(n)
 
-xPhys = np.ones(n)
+    lower = np.zeros(n)
+    # lower[1000:1200] = 0.99
+    # x[1000:1200] = 0.99
+    opt.set_lower_bounds(lower)
+    opt.set_upper_bounds(np.ones(n))
 
-lower = np.zeros(n)
-# lower[1000:1200] = 0.99
-# x[1000:1200] = 0.99
-opt.set_lower_bounds(lower)
-opt.set_upper_bounds(np.ones(n))
+    opt.set_min_objective(objective)
+    opt.add_inequality_constraint(volume_constraint, 0)
 
-opt.set_min_objective(objective)
-opt.add_inequality_constraint(volume_constraint, 0)
+    opt.set_maxeval(30)
 
-opt.set_maxeval(30)
-
-opt.optimize(x)
+    opt.optimize(x)
 
 
 
+def with_scipy():
+    n = nelx * nely
 
+    d = np.zeros(n)
+    x0 = np.ones(n) 
+    
+    bounds = np.zeros((n, 2))
+    bounds[:, 1] = 1.
+
+    c = lambda x: objective(x, d)
+    def dc(x):
+        objective(x, d)
+        return d.copy()
+
+    v = lambda x: volume_constraint(x, d)
+    def dv(x):
+        volume_constraint(x, d)
+        return d.copy()
+
+    constraints = {"type":"ineq", "fun":v, "jac":dv}
+
+    result= minimize(c,x0,jac=dv, bounds=bounds, constraints=constraints)
+    print(result)
+
+# with_scipy()
+with_nlopt()
