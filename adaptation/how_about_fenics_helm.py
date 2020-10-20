@@ -8,6 +8,8 @@ from fenics_helpers.boundary import *
 from scipy.sparse import lil_matrix, csr_matrix
 import tqdm
 
+parameters["form_compiler"]["quadrature_degree"]=1
+
 ## SIMP
 def simp(x):
     p = Constant(3.)
@@ -24,20 +26,24 @@ class FEM:
         self.force = Constant((0, -1))
 
         self.Vx = FunctionSpace(self.mesh, "DG", 0)
+        self.Vxf = FunctionSpace(self.mesh, "P", 1)
+
         self.x = interpolate(Constant(0.4),self.Vx)
-        self.xf = interpolate(Constant(0.0),self.Vx)
-        self.dxf = interpolate(Constant(0.0),self.Vx)
+
+        self.xf = interpolate(Constant(0.0),self.Vxf)
+        self.dxf = interpolate(Constant(0.0),self.Vxf)
 
         self.vol = self.x/self.V0 * dx
         self.bcs = []
         self.bcs.append(DirichletBC(self.Vu, (0.,0.), plane_at(0., "x")))
+       
         
-        def load(x, on_boundary):
-            return near(x[1], ly) and on_boundary 
+        # def load(x, on_boundary):
+            # return near(x[0], lx) and on_boundary  and near(x[1], ly/2, eps=0.1)
 
-        facets = MeshFunction("size_t", self.mesh, 1)
-        AutoSubDomain(load).mark(facets, 1)
-        ds = Measure("ds", subdomain_data=facets)
+        # facets = MeshFunction("size_t", self.mesh, 1)
+        # AutoSubDomain(load).mark(facets, 1)
+        # ds = Measure("ds", subdomain_data=facets)
 
         def eps(u):
             return sym(grad(u))
@@ -48,8 +54,7 @@ class FEM:
             return 2.0 * mu * sym(grad(u)) + lmbda * tr(sym(grad(u))) * Identity(len(u))
 
         du, u_ = TrialFunction(self.Vu), TestFunction(self.Vu)
-        F = simp(self.xf)*inner(eps(u_), sigma(du)) * dx + inner(self.force, u_)*ds(1)
-        self.a, self.L = lhs(F), rhs(F)
+        self.a = simp(self.xf)*inner(eps(u_), sigma(du)) * dx #ä+ inner(self.force, u_)*ds(1)
         self.u = Function(self.Vu)
 
         self.dK = diff(simp(self.xf), self.xf)*inner(eps(u_), sigma(du)) * dx 
@@ -60,7 +65,7 @@ class FEM:
         self.t = 0.
 
         #
-        self.R = 0.05
+        self.R = 0.01
         # r = self.Vx.tabulate_dof_coordinates()
         # A = lil_matrix((len(r), len(r)))
         #
@@ -79,12 +84,9 @@ class FEM:
         dv[:] = assemble(derivative(self.vol, self.x))[:]
         return assemble(self.vol) - 0.4
 
-
     def goal(self,x, dobj=None):
         self.x.vector()[:] = x
-        VDG = FunctionSpace(self.mesh, "DG", 0)
-        VP = FunctionSpace(self.mesh, "P", 1)
-        df, f_ = TestFunction(VP), TrialFunction(VP)
+        df, f_ = TestFunction(self.Vxf), TrialFunction(self.Vxf)
 
         af = dot(grad(df), self.R**2 * grad(f_)) * dx + df * f_ * dx
         Lf = df * self.x * dx 
@@ -98,7 +100,13 @@ class FEM:
         Vxf = assemble(self.xf * dx)
         print(Vx - Vxf)
         
+      
+        self.L = dot(Constant((0.,0.)),TestFunction(self.Vu)) * dx
         K, F = assemble_system(self.a, self.L, self.bcs)
+
+        P = PointSource(self.Vu.sub(1), Point(4.0, 1.0,), 10)
+        P.apply(F)
+
         solve(K, self.u.vector(), F)
 
         J = F.inner(self.u.vector())
@@ -107,14 +115,22 @@ class FEM:
     
         # help(dKdxU.transpmult)
         # exit(-1)
-        dc_dx = Function(self.Vx)
+        dc_dx = Function(self.Vxf)
         dKdxU.transpmult(self.u.vector(), dc_dx.vector())
 
         Ldx = assemble(-df * dc_dx * dx)
         
         solve(A, self.dxf.vector(), Ldx)
 
-        dobj[:] = self.dxf.vector()[:]
+        T = assemble(TestFunction(self.Vxf) * TrialFunction(self.Vx)*dx)
+        Tdxf = Function(self.Vx)
+
+        T.transpmult(self.dxf.vector(), Tdxf.vector())
+        # print(T.size(0))
+        # print(T.size(1))
+
+
+        dobj[:] = Tdxf.vector()[:]
         
         self.pp.write(self.x, self.t)
         self.pp.write(self.xf, self.t)
