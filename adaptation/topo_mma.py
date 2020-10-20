@@ -9,7 +9,7 @@ from topopt.problems import *
 from topopt.guis import GUI
 
 nelx, nely = 30, 10  # Number of elements in the x and y
-# nelx, nely = 20, 5  # Number of elements in the x and y
+nelx, nely = 200, 50  # Number of elements in the x and y
 # nelx, nely = 360, 200  # Number of elements in the x and y
 volfrac = 0.4  # Volume fraction for constraints
 penal = 3.0  # Penalty for SIMP
@@ -67,16 +67,14 @@ def H_filter(nelx, nely, rmin):
 H, Hs = H_filter(nelx, nely, rmin)
     
 n = nelx * nely
-xPhys = np.ones(n)
+xPhys = np.ones(n) * volfrac
 
 if show_gui:
     gui = GUI(problem, "Topology Optimization Example")
 
 def volume_constraint(x, dv):
-    xPhys[:] = np.asarray(H * x[:,np.newaxis] / Hs)[:, 0]
     dv[:] = 1.
-    dv[:] = numpy.asarray(H * (dv[np.newaxis].T / Hs))[:, 0]
-    return xPhys.sum() - volfrac * x.size
+    return x.sum() - volfrac * x.size
 
 
 def objective(x, dc):
@@ -103,7 +101,7 @@ def with_nlopt():
     opt.set_min_objective(objective)
     opt.add_inequality_constraint(volume_constraint, 0)
 
-    opt.set_maxeval(30)
+    opt.set_maxeval(50)
 
     opt.optimize(x)
 

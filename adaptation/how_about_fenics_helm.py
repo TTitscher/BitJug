@@ -1,19 +1,13 @@
 import numpy as np
 import nlopt
-import matplotlib.pyplot as plt
 
 from dolfin import *
 from fenics_helpers.boundary import *
 
-from scipy.sparse import lil_matrix, csr_matrix
-import tqdm
-
 parameters["form_compiler"]["quadrature_degree"]=1
 
-## SIMP
 def simp(x):
-    p = Constant(3.)
-    # return x**p
+    p = Constant(4.)
     _eps = Constant(1.e-6)
     return _eps + (1 - _eps) * x ** p
 
@@ -28,23 +22,17 @@ class FEM:
         self.Vx = FunctionSpace(self.mesh, "DG", 0)
         self.Vxf = FunctionSpace(self.mesh, "P", 1)
 
-        self.x = interpolate(Constant(0.4),self.Vx)
+        self.x = Function(self.Vx, name="x")
+        self.x.vector()[:] = 0.2
 
-        self.xf = interpolate(Constant(0.0),self.Vxf)
-        self.dxf = interpolate(Constant(0.0),self.Vxf)
+        self.xf = Function(self.Vxf, name="xf")
+        self.dxf = Function(self.Vxf)
 
         self.vol = self.x/self.V0 * dx
         self.bcs = []
         self.bcs.append(DirichletBC(self.Vu, (0.,0.), plane_at(0., "x")))
        
         
-        # def load(x, on_boundary):
-            # return near(x[0], lx) and on_boundary  and near(x[1], ly/2, eps=0.1)
-
-        # facets = MeshFunction("size_t", self.mesh, 1)
-        # AutoSubDomain(load).mark(facets, 1)
-        # ds = Measure("ds", subdomain_data=facets)
-
         def eps(u):
             return sym(grad(u))
 
@@ -64,71 +52,62 @@ class FEM:
         self.pp.parameters["flush_output"]=True
         self.t = 0.
 
-        #
-        self.R = 0.01
-        # r = self.Vx.tabulate_dof_coordinates()
-        # A = lil_matrix((len(r), len(r)))
-        #
-        # for dof0, x0 in enumerate(tqdm.tqdm(r)):
-        #     for dof1, x1 in enumerate(r):
-        #         dist = np.linalg.norm(x0 - x1)
-        #         if dist < R:
-        #             A[dof0, dof1] = R - dist
+        self.R = lx/nx
     
-
-
-    
-
-    def volume_constraint(self, x, dv=None):
-        self.x.vector()[:] = x
-        dv[:] = assemble(derivative(self.vol, self.x))[:]
-        return assemble(self.vol) - 0.4
-
-    def goal(self,x, dobj=None):
-        self.x.vector()[:] = x
         df, f_ = TestFunction(self.Vxf), TrialFunction(self.Vxf)
 
         af = dot(grad(df), self.R**2 * grad(f_)) * dx + df * f_ * dx
-        Lf = df * self.x * dx 
+        self.Lf = df * self.x * dx 
         
-        A = assemble(af)
-        L = assemble(Lf)
+        self.Kf = assemble(af)
+        self.filterer = LUSolver(self.Kf)
         
-        solve(A, self.xf.vector(), L)
+        self.T = assemble(TestFunction(self.Vxf) * TrialFunction(self.Vx)*dx)
+        
+        self.F = Function(self.Vu).vector()
+        P = PointSource(self.Vu.sub(1), Point(lx, ly/2.), 10)
+        P.apply(self.F)
+        
+        self.dv = assemble(derivative(self.vol, self.x))[:]
+        
+        self.dKdxU = derivative(self.a * self.u, self.xf)
+        
+        self.dc_dxf = Function(self.Vxf)
+        self.Ldx = -TestFunction(self.Vxf) * self.dc_dxf * dx
 
-        Vx = assemble(self.x * dx)
-        Vxf = assemble(self.xf * dx)
-        print(Vx - Vxf)
+        self.K = PETScMatrix()
+
+    def volume_constraint(self, x, dv=None):
+        self.x.vector()[:] = x
+        dv[:] = self.dv
+        return assemble(self.vol) - 0.2
+
+    def goal(self,x, dobj=None):
+        self.x.vector()[:] = x
         
+        self.filterer.solve(self.xf.vector(), assemble(self.Lf))
+
+        assert abs(assemble(self.x * dx) - assemble(self.xf * dx)) < 1.e-10
       
-        self.L = dot(Constant((0.,0.)),TestFunction(self.Vu)) * dx
-        K, F = assemble_system(self.a, self.L, self.bcs)
+        assemble(self.a, tensor=self.K)
+        for bc in self.bcs:
+            bc.apply(self.K)
 
-        P = PointSource(self.Vu.sub(1), Point(4.0, 1.0,), 10)
-        P.apply(F)
+        solve(self.K, self.u.vector(), self.F)
 
-        solve(K, self.u.vector(), F)
-
-        J = F.inner(self.u.vector())
-        dKdxU = assemble(derivative(self.a * self.u, self.xf))
+        J = self.F.inner(self.u.vector())
         print(self.t, "c = ", J, flush=True)
     
-        # help(dKdxU.transpmult)
-        # exit(-1)
-        dc_dx = Function(self.Vxf)
-        dKdxU.transpmult(self.u.vector(), dc_dx.vector())
+        dKdxU = assemble(self.dKdxU)
+        dKdxU.transpmult(self.u.vector(), self.dc_dxf.vector())
 
-        Ldx = assemble(-df * dc_dx * dx)
+        Ldx = assemble(self.Ldx)
         
-        solve(A, self.dxf.vector(), Ldx)
+        self.filterer.solve(self.dxf.vector(), Ldx)
 
-        T = assemble(TestFunction(self.Vxf) * TrialFunction(self.Vx)*dx)
         Tdxf = Function(self.Vx)
 
-        T.transpmult(self.dxf.vector(), Tdxf.vector())
-        # print(T.size(0))
-        # print(T.size(1))
-
+        self.T.transpmult(self.dxf.vector(), Tdxf.vector())
 
         dobj[:] = Tdxf.vector()[:]
         
@@ -138,23 +117,15 @@ class FEM:
 
         return J
         
-        
-
-
-
-
 if __name__ == "__main__":
     set_log_level(50)
-    fem = FEM(4, 1, 200, 50)
+    fem = FEM(200, 50, 200, 50)
 
     x0 = fem.x.vector()[:]
     n = len(x0)
     
     dd = np.zeros(n)
     fem.goal(x0, dd)
-    # print(dd)
-    
-    # exit(-1)
 
     opt = nlopt.opt(nlopt.LD_MMA, n)
     opt.set_lower_bounds(np.zeros(n))
@@ -163,20 +134,5 @@ if __name__ == "__main__":
     opt.set_min_objective(fem.goal) 
     opt.add_inequality_constraint(fem.volume_constraint) 
 
-
-
-    opt.set_maxeval(100)
-    # opt.set_xtol_abs(0.1)
+    opt.set_maxeval(50)
     x = opt.optimize(x0)
-
-
-    print(x)
-        
-
-
-    # print(fem.volume_constraint(x0))
-    # print(fem.goal(x0))
-    # print(fem.goal(x0*2))
-
-    
-
