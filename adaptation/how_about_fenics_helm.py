@@ -6,6 +6,28 @@ from fenics_helpers.boundary import *
 
 parameters["form_compiler"]["quadrature_degree"]=1
 
+def build_nullspace2D(V, u):
+    """Function to build null space for 2D elasticity"""
+
+    # Create list of vectors for null space
+    nullspace_basis = [u.copy() for i in range(3)]
+    # Build translational null space basis
+    V.sub(0).dofmap().set(nullspace_basis[0], 1.0)
+    V.sub(1).dofmap().set(nullspace_basis[1], 1.0)
+
+    # Build rotational null space basis
+    V.sub(0).set_x(nullspace_basis[2], -1.0, 1)
+    V.sub(1).set_x(nullspace_basis[2], 1.0, 0)
+
+    for x in nullspace_basis:
+        x.apply("insert")
+
+    # Create vector space basis and orthogonalize
+    basis = VectorSpaceBasis(nullspace_basis)
+    basis.orthonormalize()
+
+    return basis
+
 def simp(x):
     p = Constant(4.)
     _eps = Constant(1.e-6)
@@ -76,6 +98,21 @@ class FEM:
         self.Ldx = -TestFunction(self.Vxf) * self.dc_dxf * dx
 
         self.K = PETScMatrix()
+        self.null_space = build_nullspace2D(self.Vu, self.u.vector())
+
+        pc = PETScPreconditioner("petsc_amg")
+
+        # Use Chebyshev smoothing for multigrid
+        PETScOptions.set("mg_levels_ksp_type", "chebyshev")
+        PETScOptions.set("mg_levels_pc_type", "jacobi")
+
+        # Improve estimate of eigenvalues for Chebyshev smoothing
+        PETScOptions.set("mg_levels_esteig_ksp_type", "gmres")
+        PETScOptions.set("mg_levels_ksp_chebyshev_esteig_steps", 50)
+
+        self.solver = PETScKrylovSolver("gmres", pc)
+        self.solver = LUSolver("mumps")
+
 
     def volume_constraint(self, x, dv=None):
         self.x.vector()[:] = x
@@ -90,10 +127,12 @@ class FEM:
         assert abs(assemble(self.x * dx) - assemble(self.xf * dx)) < 1.e-10
       
         assemble(self.a, tensor=self.K)
+        # self.K.set_near_nullspace(self.null_space)
         for bc in self.bcs:
             bc.apply(self.K)
+            bc.apply(self.F)
 
-        solve(self.K, self.u.vector(), self.F)
+        self.solver.solve(self.K, self.u.vector(), self.F)
 
         J = self.F.inner(self.u.vector())
         print(self.t, "c = ", J, flush=True)
