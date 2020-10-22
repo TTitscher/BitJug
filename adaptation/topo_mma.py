@@ -9,13 +9,13 @@ from topopt.problems import *
 from topopt.guis import GUI
 
 nelx, nely = 30, 10  # Number of elements in the x and y
-nelx, nely = 200, 50  # Number of elements in the x and y
+nelx, nely = 400, 100  # Number of elements in the x and y
 # nelx, nely = 360, 200  # Number of elements in the x and y
 volfrac = 0.4  # Volume fraction for constraints
 penal = 3.0  # Penalty for SIMP
 rmin = 3  # Filter radius
 
-show_gui = True
+show_gui = False
 
 # Initial solution
 x = volfrac * np.ones(nely * nelx, dtype=float)
@@ -67,6 +67,7 @@ def H_filter(nelx, nely, rmin):
 H, Hs = H_filter(nelx, nely, rmin)
     
 n = nelx * nely
+print(n)
 xPhys = np.ones(n) * volfrac
 
 if show_gui:

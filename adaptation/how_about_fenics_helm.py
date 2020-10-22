@@ -8,8 +8,8 @@ import mpi4py
 parameters["form_compiler"]["quadrature_degree"]=1
 
 def simp(x):
-    p = Constant(4.)
-    _eps = Constant(1.e-6)
+    p = Constant(3.)
+    _eps = Constant(1.e-5)
     return _eps + (1 - _eps) * x ** p
 
 def rank():
@@ -74,12 +74,15 @@ class FEM:
         self.Lf = df * self.x * dx 
         
         self.Kf = assemble(af)
-        self.filterer = LUSolver(self.Kf)
+        self.filterer = KrylovSolver(self.Kf, "cg", "jacobi")
         
         self.T = assemble(TestFunction(self.Vxf) * TrialFunction(self.Vx)*dx)
-        
+       
+        v = 10.
+        if rank():
+            v = 0.
         self.F = Function(self.Vu).vector()
-        P = PointSource(self.Vu.sub(1), Point(lx, ly/2.), 10)
+        P = PointSource(self.Vu.sub(1), Point(lx, ly/2.), v)
         P.apply(self.F)
         
         self.dv = assemble(derivative(self.vol, self.x))
@@ -90,6 +93,9 @@ class FEM:
         self.Ldx = -TestFunction(self.Vxf) * self.dc_dxf * dx
 
         self.K = PETScMatrix()
+
+        self.solver = KrylovSolver(self.K, "cg", "hypre_amg")
+        self.solver = LUSolver(self.K, "mumps")
 
     def volume_constraint(self, x, dv=None):
         assign_from_0(x, self.x.vector())
@@ -109,13 +115,13 @@ class FEM:
         
         self.filterer.solve(self.xf.vector(), assemble(self.Lf))
 
-        assert abs(assemble(self.x * dx) - assemble(self.xf * dx)) < 1.e-10
+        # assert abs(assemble(self.x * dx) - assemble(self.xf * dx)) < 1.e-10
       
         assemble(self.a, tensor=self.K)
         for bc in self.bcs:
             bc.apply(self.K)
-
-        solve(self.K, self.u.vector(), self.F)
+        
+        self.solver.solve(self.K, self.u.vector(), self.F)
 
         J = self.F.inner(self.u.vector())
         if rank() == 0:
@@ -151,6 +157,7 @@ if __name__ == "__main__":
 
     if rank() == 0:
         n = fem.Vx.dim()
+        print(n)
     else:
         n = 1 # we solve a dummy problem here
 
