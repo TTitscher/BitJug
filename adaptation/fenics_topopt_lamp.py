@@ -1,4 +1,5 @@
 from fenics_topopt import *
+from fenics_helpers.boundary import *
 from mshr import *
 
 

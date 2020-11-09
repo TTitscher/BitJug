@@ -34,6 +34,12 @@ def sigma(u, prm):
     lmbda = E * nu / ((1.0 + nu) * (1.0 - 2.0 * nu))
     return 2.0 * mu * sym(grad(u)) + lmbda * tr(sym(grad(u))) * Identity(len(u))
 
+def x_at(coordinate=0, eps=1.0e-10):
+    class B(SubDomain):
+        def inside(self, x, on_boundary):
+            return on_boundary and near(x[0], coordinate, eps)
+    return B()
+
 
 class FEM:
     def __init__(self, V, filt, prm, F, bcs):
@@ -76,7 +82,7 @@ class FEM:
         else:
             self.solver = LUSolver(self.K, "mumps")
 
-    def goal(self, x, dobj=None):
+    def goal(self, x, dobj):
         self.filt.filter_density(x)
 
         assemble(self.a, tensor=self.K)
@@ -87,9 +93,8 @@ class FEM:
 
         J = self.F.inner(self.u.vector())
 
-        if dobj is not None:
-            dc_dxf = assemble(self.dc_dxf_form)
-            dobj[:] = self.filt.filter_sensitivity(dc_dxf)
+        dc_dxf = assemble(self.dc_dxf_form)
+        dobj[:] = self.filt.filter_sensitivity(dc_dxf)
 
         self.post_process()
         print(f"{int(self.t):3d} c = {J:10.6f}", flush=True)
@@ -204,7 +209,7 @@ def point_load_FEM(mesh, filt, prm, load_at):
     P = PointSource(V.sub(1), Point(*load_at), 10)
     P.apply(F)
 
-    bc = DirichletBC(V, np.zeros_like(load_at), plane_at(0.0, "x"))
+    bc = DirichletBC(V, np.zeros_like(load_at), x_at(0.0))
     return FEM(V, filt, prm, F, [bc])
 
 
@@ -228,24 +233,16 @@ def define_optimizer(fem, volfrac, bounds=None):
 
 
 if __name__ == "__main__":
-    lx, ly, lz = 60, 30, 20
-    # lx, ly = 360, 120
-    nx, ny, nz = lx, ly, lz
+    lx, ly= 120, 60
+    nx, ny= lx, ly
     load_at = (lx, ly / 2)
 
-    from mshr import Box, generate_mesh
-
     mesh = RectangleMesh(Point(0, 0), Point(lx, ly), nx, ny)
-    # mesh = BoxMesh(Point(0.,0.,0.), Point(lx, ly, lz), nx, ny, 4)
-    # geometry = Box(Point(0,0,0), Point(lx, ly, lz))
-    # mesh = generate_mesh(geometry, 120)
-
-    # load_at = (lx, ly/2., lz/2.)
 
     filt = HelmholtzFilter(mesh, R=0.5)
     # filt = MeshFilter(mesh)
     fem = point_load_FEM(mesh, filt, Parameter(), load_at)
 
-    opt, x0 = define_optimizer(fem, 0.1)
+    opt, x0 = define_optimizer(fem, 0.2)
     opt.set_maxeval(50)
     x = opt.optimize(x0)
