@@ -243,6 +243,6 @@ if __name__ == "__main__":
     # filt = MeshFilter(mesh)
     fem = point_load_FEM(mesh, filt, Parameter(), load_at)
 
-    opt, x0 = define_optimizer(fem, 0.2)
+    opt, x0 = define_optimizer(fem, 0.4)
     opt.set_maxeval(50)
     x = opt.optimize(x0)
