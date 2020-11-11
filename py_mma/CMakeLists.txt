@@ -13,8 +13,8 @@ message(STATUS "PETSc INCLUDE DIRS: ${PETSC_INCLUDE_DIRS}")
 message(STATUS "PETSc LIBS: ${PETSC_LIBRARIES}")
 
 
-pybind11_add_module(py_mma py_mma.cpp)
-target_compile_options(py_mma PRIVATE -Wall;-Werror;-pedantic)
+pybind11_add_module(py_mma py_mma.cpp MMA.cc)
+#target_compile_options(py_mma PRIVATE -Wall;-Werror;-pedantic)
 
 target_include_directories(py_mma PRIVATE ${PETSC4PY_INCLUDE_DIRS})
 target_link_libraries(py_mma PRIVATE MPI::MPI_CXX PETSC::petsc pybind11::module)
